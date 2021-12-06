@@ -44,9 +44,9 @@ def minirocket_arff_acc(dataset_name, sample_num):
     Y_test = Y_test.astype(np.int)
     
     # transform and fit
-    time_a = time.perf_counter()
     
     parameters = fit(X_training)
+    time_a = time.perf_counter()
     X_training_transform = transform(X_training, parameters)
     X_test_transform = transform(X_test, parameters)
 
@@ -66,11 +66,11 @@ def minirocket_arff_acc(dataset_name, sample_num):
 def get_sample_num(dataset_name):
     
     if dataset_name == 'InsectSound':
-        return [2**i for i in range(13, 15)]
+        return [i for i in range(13, 15)]
     elif dataset_name == 'FruitFlies':
-        return [2**i for i in range(10, 15)]
+        return [i for i in range(10, 15)]
     elif dataset_name == 'MosquitoSound':
-        return [2**i for i in range(10, 18)]
+        return [i for i in range(10, 18)]
     
 
 # dataset_names = ['InsectSound', 'FruitFlies', 'MosquitoSound']
@@ -80,7 +80,8 @@ for dataset_name in dataset_names:
     print(dataset_name)
     sample_num_list = get_sample_num(dataset_name)
     for sample_num in sample_num_list:
-        acc, t = minirocket_arff_acc(dataset_name, sample_num)
+        acc, t = minirocket_arff_acc(dataset_name, 2**sample_num)
         print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()) + ' ' + str(sample_num) + ' ' + str(acc) + ' ' + str(t))
+
 
 print("Finish")
