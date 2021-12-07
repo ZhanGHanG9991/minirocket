@@ -27,7 +27,7 @@ def minirocket_acc(dataset_name, num_features=10_000, max_dilations_per_kernel=3
     
     # transform and fit
     
-    parameters = fit(X_training, num_features=num_features)
+    parameters = fit(X_training, num_features=num_features, max_dilations_per_kernel=max_dilations_per_kernel)
     X_training_transform = transform(X_training, parameters)
     X_test_transform = transform(X_test, parameters)
     
