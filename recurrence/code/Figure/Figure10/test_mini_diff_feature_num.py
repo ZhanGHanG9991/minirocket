@@ -54,6 +54,7 @@ f = open('mini_diff_feature_num.csv','w',encoding='utf-8')
 csv_writer = csv.writer(f)
 csv_writer.writerow(['classifier_name', 'dataset_name', 'accuracy'])
 for feature_num in feature_nums:
+    cnt = 0
     for file in sorted(files):
         cnt += 1
         acc = minirocket_acc(file, feature_num)
