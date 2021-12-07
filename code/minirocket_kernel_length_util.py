@@ -6,30 +6,15 @@
 # https://arxiv.org/abs/2012.08791
 
 from numba import njit, prange, vectorize
+from itertools import combinations
 import numpy as np
+import math
 
-@njit("float32[:](float32[:,:],int32[:],int32[:],float32[:])", fastmath = True, parallel = False, cache = True)
-def _fit_biases(X, dilations, num_features_per_dilation, quantiles):
+def _fit_biases(X, dilations, num_features_per_dilation, quantiles, kernel_length, alpha_num):
 
     num_examples, input_length = X.shape
 
-    # equivalent to:
-    # >>> from itertools import combinations
-    # >>> indices = np.array([_ for _ in combinations(np.arange(9), 3)], dtype = np.int32)
-    indices = np.array((
-        0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
-        0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
-        0,3,5,0,3,6,0,3,7,0,3,8,0,4,5,0,4,6,0,4,7,
-        0,4,8,0,5,6,0,5,7,0,5,8,0,6,7,0,6,8,0,7,8,
-        1,2,3,1,2,4,1,2,5,1,2,6,1,2,7,1,2,8,1,3,4,
-        1,3,5,1,3,6,1,3,7,1,3,8,1,4,5,1,4,6,1,4,7,
-        1,4,8,1,5,6,1,5,7,1,5,8,1,6,7,1,6,8,1,7,8,
-        2,3,4,2,3,5,2,3,6,2,3,7,2,3,8,2,4,5,2,4,6,
-        2,4,7,2,4,8,2,5,6,2,5,7,2,5,8,2,6,7,2,6,8,
-        2,7,8,3,4,5,3,4,6,3,4,7,3,4,8,3,5,6,3,5,7,
-        3,5,8,3,6,7,3,6,8,3,7,8,4,5,6,4,5,7,4,5,8,
-        4,6,7,4,6,8,4,7,8,5,6,7,5,6,8,5,7,8,6,7,8
-    ), dtype = np.int32).reshape(84, 3)
+    indices = np.array([_ for _ in combinations(np.arange(kernel_length), alpha_num)], dtype = np.int32)
 
     num_kernels = len(indices)
     num_dilations = len(dilations)
@@ -43,7 +28,7 @@ def _fit_biases(X, dilations, num_features_per_dilation, quantiles):
     for dilation_index in range(num_dilations):
 
         dilation = dilations[dilation_index]
-        padding = ((9 - 1) * dilation) // 2
+        padding = ((kernel_length - 1) * dilation) // 2
 
         num_features_this_dilation = num_features_per_dilation[dilation_index]
 
@@ -59,20 +44,20 @@ def _fit_biases(X, dilations, num_features_per_dilation, quantiles):
             C_alpha = np.zeros(input_length, dtype = np.float32)
             C_alpha[:] = A
 
-            C_gamma = np.zeros((9, input_length), dtype = np.float32)
-            C_gamma[9 // 2] = G
+            C_gamma = np.zeros((kernel_length, input_length), dtype = np.float32)
+            C_gamma[kernel_length // 2] = G
 
             start = dilation
             end = input_length - padding
 
-            for gamma_index in range(9 // 2):
+            for gamma_index in range(kernel_length // 2):
 
                 C_alpha[-end:] = C_alpha[-end:] + A[:end]
                 C_gamma[gamma_index, -end:] = G[:end]
 
                 end += dilation
 
-            for gamma_index in range(9 // 2 + 1, 9):
+            for gamma_index in range(kernel_length // 2 + 1, kernel_length):
 
                 C_alpha[:-start] = C_alpha[:-start] + A[start:]
                 C_gamma[gamma_index, :-start] = G[start:]
@@ -89,9 +74,9 @@ def _fit_biases(X, dilations, num_features_per_dilation, quantiles):
 
     return biases
 
-def _fit_dilations(input_length, num_features, max_dilations_per_kernel):
+def _fit_dilations(input_length, num_features, max_dilations_per_kernel, kernel_length, alpha_num):
 
-    num_kernels = 84
+    num_kernels = Cnn(kernel_length, alpha_num)
 
     # 一个kernel能有几个特征
     num_features_per_kernel = num_features // num_kernels
@@ -103,7 +88,7 @@ def _fit_dilations(input_length, num_features, max_dilations_per_kernel):
     multiplier = num_features_per_kernel / true_max_dilations_per_kernel
 
     # 
-    max_exponent = np.log2((input_length - 1) / (9 - 1))
+    max_exponent = np.log2((input_length - 1) / (kernel_length - 1))
     dilations, num_features_per_dilation = \
     np.unique(np.logspace(0, max_exponent, true_max_dilations_per_kernel, base = 2).astype(np.int32), return_counts = True)
     num_features_per_dilation = (num_features_per_dilation * multiplier).astype(np.int32) # this is a vector
@@ -122,54 +107,39 @@ def _fit_dilations(input_length, num_features, max_dilations_per_kernel):
 def _quantiles(n):
     return np.array([(_ * ((np.sqrt(5) + 1) / 2)) % 1 for _ in range(1, n + 1)], dtype = np.float32)
 
-def fit(X, num_features = 10_000, max_dilations_per_kernel = 32):
+def fit(X, num_features = 10_000, max_dilations_per_kernel = 32, kernel_length = 9, alpha_num = 3):
 
     _, input_length = X.shape
 
-    num_kernels = 84
+    num_kernels = Cnn(kernel_length, alpha_num)
 
-    dilations, num_features_per_dilation = _fit_dilations(input_length, num_features, max_dilations_per_kernel)
+    dilations, num_features_per_dilation = _fit_dilations(input_length, num_features, max_dilations_per_kernel, kernel_length, alpha_num)
 
     num_features_per_kernel = np.sum(num_features_per_dilation)
 
     quantiles = _quantiles(num_kernels * num_features_per_kernel)
 
-    biases = _fit_biases(X, dilations, num_features_per_dilation, quantiles)
+    biases = _fit_biases(X, dilations, num_features_per_dilation, quantiles, kernel_length, alpha_num)
 
     return dilations, num_features_per_dilation, biases
 
 # _PPV(C, b).mean() returns PPV for vector C (convolution output) and scalar b (bias)
-@vectorize("float32(float32,float32)", nopython = True, cache = True)
 def _PPV(a, b):
     if a > b:
         return 1
     else:
         return 0
 
-@njit("float32[:,:](float32[:,:],Tuple((int32[:],int32[:],float32[:])))", fastmath = True, parallel = True, cache = True)
-def transform(X, parameters):
+def Cnn(n, m):
+    return math.factorial(n)//(math.factorial(m)*math.factorial(n-m))
+
+def transform(X, parameters, kernel_length = 9, alpha_num = 3):
 
     num_examples, input_length = X.shape
 
     dilations, num_features_per_dilation, biases = parameters
 
-    # equivalent to:
-    # >>> from itertools import combinations
-    # >>> indices = np.array([_ for _ in combinations(np.arange(9), 3)], dtype = np.int32)
-    indices = np.array((
-        0,1,2,0,1,3,0,1,4,0,1,5,0,1,6,0,1,7,0,1,8,
-        0,2,3,0,2,4,0,2,5,0,2,6,0,2,7,0,2,8,0,3,4,
-        0,3,5,0,3,6,0,3,7,0,3,8,0,4,5,0,4,6,0,4,7,
-        0,4,8,0,5,6,0,5,7,0,5,8,0,6,7,0,6,8,0,7,8,
-        1,2,3,1,2,4,1,2,5,1,2,6,1,2,7,1,2,8,1,3,4,
-        1,3,5,1,3,6,1,3,7,1,3,8,1,4,5,1,4,6,1,4,7,
-        1,4,8,1,5,6,1,5,7,1,5,8,1,6,7,1,6,8,1,7,8,
-        2,3,4,2,3,5,2,3,6,2,3,7,2,3,8,2,4,5,2,4,6,
-        2,4,7,2,4,8,2,5,6,2,5,7,2,5,8,2,6,7,2,6,8,
-        2,7,8,3,4,5,3,4,6,3,4,7,3,4,8,3,5,6,3,5,7,
-        3,5,8,3,6,7,3,6,8,3,7,8,4,5,6,4,5,7,4,5,8,
-        4,6,7,4,6,8,4,7,8,5,6,7,5,6,8,5,7,8,6,7,8
-    ), dtype = np.int32).reshape(84, 3)
+    indices = np.array([_ for _ in combinations(np.arange(kernel_length), alpha_num)], dtype = np.int32)
 
     num_kernels = len(indices)
     num_dilations = len(dilations)
@@ -192,27 +162,27 @@ def transform(X, parameters):
             _padding0 = dilation_index % 2
 
             dilation = dilations[dilation_index]
-            padding = ((9 - 1) * dilation) // 2
+            padding = ((kernel_length - 1) * dilation) // 2
 
             num_features_this_dilation = num_features_per_dilation[dilation_index]
 
             C_alpha = np.zeros(input_length, dtype = np.float32)
             C_alpha[:] = A
 
-            C_gamma = np.zeros((9, input_length), dtype = np.float32)
-            C_gamma[9 // 2] = G
+            C_gamma = np.zeros((kernel_length, input_length), dtype = np.float32)
+            C_gamma[kernel_length // 2] = G
 
             start = dilation
             end = input_length - padding
 
-            for gamma_index in range(9 // 2):
+            for gamma_index in range(kernel_length // 2):
 
                 C_alpha[-end:] = C_alpha[-end:] + A[:end]
                 C_gamma[gamma_index, -end:] = G[:end]
 
                 end += dilation
 
-            for gamma_index in range(9 // 2 + 1, 9):
+            for gamma_index in range(kernel_length // 2 + 1, kernel_length):
 
                 C_alpha[:-start] = C_alpha[:-start] + A[start:]
                 C_gamma[gamma_index, :-start] = G[start:]
